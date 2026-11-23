@@ -1,0 +1,3 @@
+# Vendored PDF.js build output: generated upstream, kept out of language stats and diffs.
+assets/pdfjs/** linguist-vendored -diff
+assets/pdfjs/README.md linguist-vendored=false diff

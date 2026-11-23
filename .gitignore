@@ -1,0 +1,10 @@
+# dependencies
+node_modules/
+
+# local editor / OS noise
+.DS_Store
+Thumbs.db
+*.log
+
+# DSH project memory (agent-local)
+.mnemon/

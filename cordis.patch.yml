@@ -1,0 +1,9 @@
+# @beibingyangliuying/dsh-sidebar-pdf-nav bundle patch: insert the plugin as one profile row.
+#
+# The row name is the package name on purpose: dsh-client-modules scans rows
+# whose name resolves to a package to find its `dsh.client` declaration and
+# serve the browser half at /plugins/<package>/client.js. The scoped name is
+# what the browser half registers itself under, so both must stay in sync.
+- insert:
+    - id: dsh-sidebar-pdf-nav
+      name: '@beibingyangliuying/dsh-sidebar-pdf-nav'

@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: '@beibingyangliuying/dsh-sidebar-pdf-nav',
+  id: '@beibingyangliuying/dsh-sidebar-doc-nav',
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
@@ -13,13 +13,12 @@ window.__ModuleLoader__.load({
       : (reactDomModule && reactDomModule.default && reactDomModule.default.createPortal);
 
     var PDF_BODY_ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/pdf';
-    var PACKAGE_ID = '@beibingyangliuying/dsh-sidebar-pdf-nav';
-    var ASSET_BASE = '/dsh-sidebar-pdf-nav-assets/pdfjs/';
+    var PACKAGE_ID = '@beibingyangliuying/dsh-sidebar-doc-nav';
+    var ASSET_BASE = '/dsh-sidebar-doc-nav-assets/pdfjs/';
     var ASSET_VERSION = '6.5.438-dshpdf1';
-    var STORE_PAGES = 'dsh-sidebar-pdf-nav/v1/pages';
-    var STORE_PAGES_LEGACY = 'dsh-pdf-reader/v1/pages';
-    var STORE_OUTLINE = 'dsh-sidebar-pdf-nav/v1/outline';
-    var STORE_UI = 'dsh-sidebar-pdf-nav/v1/ui';
+    var STORE_PAGES = 'dsh-sidebar-doc-nav/v1/pages';
+    var STORE_OUTLINE = 'dsh-sidebar-doc-nav/v1/outline';
+    var STORE_UI = 'dsh-sidebar-doc-nav/v1/ui';
     var FRAME_SELECTOR = '[data-document-preview]';
     var SCROLL_SELECTOR = '[data-document-zoom-scrollport]';
     var PANEL_WIDTH = 336;
@@ -60,7 +59,7 @@ window.__ModuleLoader__.load({
       '.dpr-thumb{display:flex;flex-direction:column;gap:4px;cursor:pointer;border-radius:4px;padding:3px;border:1px solid transparent}',
       '.dpr-thumb:hover{border-color:color-mix(in srgb, var(--dsw-alias-label-secondary) 30%, transparent)}',
       '.dpr-thumb.is-current{border-color:var(--dsw-alias-label-primary);background:color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent)}',
-      '.dpr-thumb-canvas{display:block;width:100%;height:auto;aspect-ratio:3/4;background:var(--dsw-alias-bg-skeleton);border-radius:2px}',
+      '.dpr-thumb-canvas{display:block;width:100%;height:auto;background:var(--dsw-alias-bg-skeleton);border-radius:2px}',
       '.dpr-thumb-label{font-size:11px;color:var(--dsw-alias-label-secondary);text-align:center;font-variant-numeric:tabular-nums}',
       '.dpr-search{padding:8px 10px 4px;display:flex;flex-direction:column;gap:8px}',
       '.dpr-search-input{appearance:none;width:100%;box-sizing:border-box;font:inherit;font-size:12px;padding:6px 8px;color:var(--dsw-alias-label-primary);background:color-mix(in srgb, var(--dsw-alias-label-secondary) 10%, transparent);border:1px solid color-mix(in srgb, var(--dsw-alias-label-secondary) 22%, transparent);border-radius:4px;outline:none}',
@@ -74,31 +73,36 @@ window.__ModuleLoader__.load({
     ].join('\n');
 
     function installStyles() {
-      if (document.querySelector('style[data-dsh-pdf-reader]') !== null) return function () {};
+      if (document.querySelector('style[data-dsh-doc-nav]') !== null) return function () {};
       var tag = document.createElement('style');
-      tag.dataset.dshPdfReader = 'styles';
+      tag.dataset.dshDocNav = 'styles';
       tag.textContent = CSS;
       document.head.appendChild(tag);
       return function () { tag.remove(); };
     }
 
-    function readStore(storeKey, legacyKey) {
+    /**
+     * Read a keyed JSON store from local storage.
+     *
+     * @param storeKey - local storage key holding an object of records.
+     * @returns the stored object, or an empty one when absent or unreadable.
+     */
+    function readStore(storeKey) {
       try {
         var raw = window.localStorage.getItem(storeKey);
-        if (raw === null && legacyKey !== undefined) {
-          raw = window.localStorage.getItem(legacyKey);
-          if (raw !== null) {
-            window.localStorage.setItem(storeKey, raw);
-            window.localStorage.removeItem(legacyKey);
-          }
-        }
-        var parsed = raw === null ? {} : JSON.parse(raw);
+        var parsed = raw === null ? null : JSON.parse(raw);
         return parsed !== null && typeof parsed === 'object' ? parsed : {};
       } catch (error) {
         return {};
       }
     }
 
+    /**
+     * Replace a keyed JSON store in local storage.
+     *
+     * @param storeKey - local storage key to write.
+     * @param value - the object to persist.
+     */
     function writeStore(storeKey, value) {
       try {
         window.localStorage.setItem(storeKey, JSON.stringify(value));
@@ -107,17 +111,97 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * Read one record from a keyed store.
+     *
+     * @param storeKey - local storage key holding an object of records.
+     * @param key - record key inside that store.
+     * @returns the stored record, or undefined when absent.
+     */
+    function readRecord(storeKey, key) {
+      migrateLegacyStores();
+      return readStore(storeKey)[key];
+    }
+
+    /**
+     * Write one record into a keyed store, leaving its siblings intact.
+     *
+     * @param storeKey - local storage key holding an object of records.
+     * @param key - record key inside that store.
+     * @param value - the record to persist.
+     */
+    function writeRecord(storeKey, key, value) {
+      var all = readStore(storeKey);
+      all[key] = value;
+      writeStore(storeKey, all);
+    }
+
+    // Store names used before the plugin grew Office support; records found
+    // there are folded into the current keys once, then dropped.
+    var LEGACY_STORES = [
+      { current: STORE_PAGES, previous: ['dsh-sidebar-pdf-nav/v1/pages', 'dsh-pdf-reader/v1/pages'] },
+      { current: STORE_OUTLINE, previous: ['dsh-sidebar-pdf-nav/v1/outline'] },
+      { current: STORE_UI, previous: ['dsh-sidebar-pdf-nav/v1/ui'] },
+    ];
+
+    var storesMigrated = false;
+
+    /**
+     * Fold records saved under previous store names into the current stores.
+     *
+     * A record already present under the current name wins, so renaming the
+     * package never overwrites state written after the rename. The old keys are
+     * dropped once their records are copied.
+     */
+    function migrateLegacyStores() {
+      if (storesMigrated === true) return;
+      storesMigrated = true;
+      for (var index = 0; index < LEGACY_STORES.length; index += 1) {
+        var store = LEGACY_STORES[index];
+        var merged = readStore(store.current);
+        var copied = false;
+        for (var legacyIndex = 0; legacyIndex < store.previous.length; legacyIndex += 1) {
+          var legacyKey = store.previous[legacyIndex];
+          var legacy = readStore(legacyKey);
+          var names = Object.keys(legacy);
+          if (names.length === 0) continue;
+          copied = true;
+          for (var nameIndex = 0; nameIndex < names.length; nameIndex += 1) {
+            var name = names[nameIndex];
+            if (Object.prototype.hasOwnProperty.call(merged, name)) continue;
+            merged[name] = legacy[name];
+          }
+          try {
+            window.localStorage.removeItem(legacyKey);
+          } catch (error) {
+            /* storage unavailable */
+          }
+        }
+        if (copied === true) writeStore(store.current, merged);
+      }
+    }
+
+    /**
+     * Read the last opened page for a document.
+     *
+     * @param key - document storage key.
+     * @returns the stored page, or 0 when none was remembered.
+     */
     function readStoredPage(key) {
       if (key === undefined || key === '') return 0;
-      var value = readStore(STORE_PAGES, STORE_PAGES_LEGACY)[key];
+      var value = readRecord(STORE_PAGES, key);
       return typeof value === 'number' && value >= 1 ? Math.floor(value) : 0;
     }
 
+    /**
+     * Remember the last opened page for a document.
+     *
+     * @param key - document storage key.
+     * @param page - page number to remember.
+     */
     function writeStoredPage(key, page) {
       if (key === undefined || key === '') return;
-      var pages = readStore(STORE_PAGES, STORE_PAGES_LEGACY);
-      pages[key] = page;
-      writeStore(STORE_PAGES, pages);
+      writeRecord(STORE_PAGES, key, page);
     }
 
     function findFrame(node) {
@@ -146,6 +230,60 @@ window.__ModuleLoader__.load({
     function computePanelWidth(frameWidth) {
       var width = Math.round(Math.min(PANEL_WIDTH, Math.max(240, frameWidth * 0.55)));
       return Math.min(width, Math.max(200, Math.round(frameWidth - 200)));
+    }
+
+    var OFFICE_EXTENSIONS = { doc: true, docx: true, ppt: true, pptx: true };
+
+    /**
+     * Tell whether a path names an Office document the host can convert.
+     *
+     * @param path - absolute workspace path.
+     * @returns true for doc, docx, ppt and pptx, in any case.
+     */
+    function isOfficeDocumentPath(path) {
+      if (typeof path !== 'string') return false;
+      var cut = path.lastIndexOf('.');
+      var slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+      if (cut <= slash + 1) return false;
+      return OFFICE_EXTENSIONS[path.slice(cut + 1).toLowerCase()] === true;
+    }
+
+    var payloadIds = new WeakMap();
+    var payloadSeq = 0;
+
+    /**
+     * Identify one payload instance so a re-read of the same file reparses.
+     *
+     * The host hands the same file down as a fresh array on every read, so the
+     * array itself stands in for the document revision.
+     *
+     * @param payload - bytes handed down by the host, if any.
+     * @returns an id stable for that exact array, or 0 when there is no payload.
+     */
+    function payloadIdOf(payload) {
+      if (typeof payload !== 'object' || payload === null) return 0;
+      var known = payloadIds.get(payload);
+      if (known !== undefined) return known;
+      payloadSeq += 1;
+      payloadIds.set(payload, payloadSeq);
+      return payloadSeq;
+    }
+
+    /**
+     * Derive the on-screen shape of one page for its thumbnail box.
+     *
+     * A landscape page such as a slide must reserve a wide box before its canvas
+     * paints, otherwise the grid reflows once the render lands.
+     *
+     * @param viewport - the page viewport at scale 1.
+     * @returns width divided by height, or 3:4 when the viewport is unusable.
+     */
+    function getPageRatio(viewport) {
+      if (viewport === undefined || viewport === null) return 0.75;
+      var width = Number(viewport.width);
+      var height = Number(viewport.height);
+      if (!(width > 0) || !(height > 0)) return 0.75;
+      return width / height;
     }
 
     var PAGE_TOP_GAP = 3;
@@ -360,6 +498,8 @@ window.__ModuleLoader__.load({
         observer.observe(node);
         return function () { observer.disconnect(); };
       }, []);
+      var ratio = typeof props.ratio === 'number' && props.ratio > 0 ? props.ratio : 0.75;
+
       React.useEffect(function () {
         if (visible !== true || props.doc === undefined) return undefined;
         var cancelled = false;
@@ -369,8 +509,10 @@ window.__ModuleLoader__.load({
           var canvas = canvasRef.current;
           if (canvas === null) return undefined;
           var base = page.getViewport({ scale: 1 });
-          var ratio = Math.min(2, window.devicePixelRatio || 1);
-          var scale = (props.width / base.width) * ratio;
+          var measured = getPageRatio(base);
+          if (Math.abs(measured - ratio) > 0.01) canvas.style.aspectRatio = String(measured);
+          var density = Math.min(2, window.devicePixelRatio || 1);
+          var scale = (props.width / base.width) * density;
           var viewport = page.getViewport({ scale: scale });
           canvas.width = Math.max(1, Math.floor(viewport.width));
           canvas.height = Math.max(1, Math.floor(viewport.height));
@@ -392,7 +534,7 @@ window.__ModuleLoader__.load({
           }
         };
       }, [visible, props.doc, props.page, props.width]);
-      return h('div', { ref: holder, className: 'dpr-thumb' }, h('canvas', { ref: canvasRef, className: 'dpr-thumb-canvas' }), h('span', { className: 'dpr-thumb-label' }, props.label));
+      return h('div', { ref: holder, className: 'dpr-thumb' }, h('canvas', { ref: canvasRef, className: 'dpr-thumb-canvas', style: { aspectRatio: String(ratio) } }), h('span', { className: 'dpr-thumb-label' }, props.label));
     }
 
     function OutlineRows(props) {
@@ -505,76 +647,46 @@ window.__ModuleLoader__.load({
 
       var body = null;
       if (docState.status === 'loading') {
-        body = h('p', { className: 'dpr-hint' }, '正在解析 PDF…');
+        body = renderHint(props.loadingLabel);
       } else if (docState.status === 'error') {
-        body = h('p', { className: 'dpr-hint' }, 'PDF 解析失败：' + String(docState.error && docState.error.message ? docState.error.message : docState.error));
+        body = renderHint('PDF 解析失败：' + String(docState.error && docState.error.message ? docState.error.message : docState.error));
       } else if (docState.status !== 'ready') {
-        body = h('p', { className: 'dpr-hint' }, '正在等待 PDF 内容…');
+        body = renderHint(props.idleLabel);
       } else if (tab === 'outline') {
-        body = outline !== undefined && outline.total > 0
-          ? h(React.Fragment, null,
-              h('div', { className: 'dpr-outline-tools' },
-                h('button', { type: 'button', className: 'dpr-tool', onClick: props.onExpandAll }, '展开全部'),
-                h('button', { type: 'button', className: 'dpr-tool', onClick: props.onCollapseAll }, '折叠全部'),
-              ),
-              h(OutlineRows, {
-                nodes: outline.tree,
-                expanded: props.expanded,
-                currentNodeId: currentNodeId,
-                onPick: function (node) { if (node.page > 0) props.onJump(node.page); },
-                onToggle: props.onToggle,
-              }),
-            )
-          : h('p', { className: 'dpr-hint' }, '这份 PDF 没有内嵌书签。试试「缩略图」翻页，或用「搜索」定位正文。');
+        body = renderOutlineTab({
+          outline: outline,
+          currentNodeId: currentNodeId,
+          expanded: props.expanded,
+          onExpandAll: props.onExpandAll,
+          onCollapseAll: props.onCollapseAll,
+          onToggle: props.onToggle,
+          onJump: props.onJump,
+        });
       } else if (tab === 'thumbs') {
-        var cells = [];
-        for (var pageNumber = 1; pageNumber <= props.numPages; pageNumber += 1) {
-          cells.push(h('div', {
-            key: 'thumb-' + pageNumber,
-            className: 'dpr-thumb' + (pageNumber === props.currentPage ? ' is-current' : ''),
-            onClick: function (target) { return function () { props.onJump(target); }; }(pageNumber),
-          }, h(Thumbnail, {
-            doc: docState.doc,
-            page: pageNumber,
-            width: 148,
-            root: bodyRef.current,
-            label: props.labelOf(pageNumber),
-          })));
-        }
-        body = h('div', { className: 'dpr-grid' }, cells);
+        body = renderThumbsTab({
+          docState: docState,
+          numPages: props.numPages,
+          currentPage: props.currentPage,
+          labelOf: props.labelOf,
+          onJump: props.onJump,
+          root: bodyRef.current,
+        });
       } else {
-        var search = props.search;
-        body = h(React.Fragment, null,
-          h('div', { className: 'dpr-search' },
-            h('input', {
-              className: 'dpr-search-input',
-              type: 'search',
-              placeholder: '搜索全文，回车执行',
-              value: props.query,
-              autoFocus: true,
-              onChange: function (event) { props.onQuery(event.target.value); },
-              onKeyDown: function (event) { if (event.key === 'Enter') props.onSearch(); },
-            }),
-            h('span', { className: 'dpr-hit-page' },
-              search.status === 'running'
-                ? '搜索中… ' + String(search.scanned) + '/' + String(search.total)
-                : search.status === 'done'
-                  ? '找到 ' + String(search.results.length) + ' 处' + (search.results.length >= 200 ? '（仅显示前 200 处）' : '')
-                  : ''),
-          ),
-          search.results.map(function (hit) {
-            return h('div', { key: hit.key, className: 'dpr-hit', onClick: function () { props.onJump(hit.page); } },
-              h('span', { className: 'dpr-hit-page' }, '第 ' + props.labelOf(hit.page) + ' 页'),
-              h('span', { className: 'dpr-hit-text' }, hit.head, h('mark', { className: 'dpr-hit-mark' }, hit.mark), hit.tail));
-          }),
-        );
+        body = renderSearchTab({
+          search: props.search,
+          query: props.query,
+          onQuery: props.onQuery,
+          onSearch: props.onSearch,
+          labelOf: props.labelOf,
+          onJump: props.onJump,
+        });
       }
 
       return h('div', {
         className: 'dpr-panel',
         role: 'dialog',
-        'aria-label': 'PDF 目录与导航',
-        'data-dsh-pdf-reader-panel': true,
+        'aria-label': props.panelLabel,
+        'data-dsh-doc-nav-panel': true,
         style: { left: String(props.anchor.left) + 'px', top: String(props.anchor.top) + 'px', width: String(props.anchor.width) + 'px', height: String(props.anchor.height) + 'px' },
       },
         h('div', { className: 'dpr-head' },
@@ -609,160 +721,244 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function TocAction(props) {
-      var info = typeof props.useTabInfo === 'function' ? props.useTabInfo() : undefined;
-      var contentId = info !== undefined && info !== null && info.tab !== undefined ? String(info.tab.contentId === undefined ? '' : info.tab.contentId) : '';
-      var bytes = props.content !== undefined && props.content !== null && props.content.kind === 'bytes' ? props.content.data : undefined;
+    /**
+     * Render one centered hint line in the panel body.
+     *
+     * @param text - the message to show.
+     * @returns the hint element.
+     */
+    function renderHint(text) {
+      return h('p', { className: 'dpr-hint' }, text);
+    }
 
-      var openState = React.useState(false);
-      var open = openState[0];
-      var setOpen = openState[1];
-      var tabState = React.useState('outline');
-      var tab = tabState[0];
-      var setTab = tabState[1];
-      var docStateValue = React.useState({ status: 'idle' });
-      var docState = docStateValue[0];
-      var setDocState = docStateValue[1];
-      var pageState = React.useState(1);
-      var currentPage = pageState[0];
-      var setCurrentPage = pageState[1];
-      var anchorState = React.useState(null);
-      var anchor = anchorState[0];
-      var setAnchor = anchorState[1];
-      var expandedState = React.useState({});
-      var expanded = expandedState[0];
-      var setExpanded = expandedState[1];
-      var queryState = React.useState('');
-      var query = queryState[0];
-      var setQuery = queryState[1];
-      var searchState = React.useState({ status: 'idle', results: [], scanned: 0, total: 0 });
-      var search = searchState[0];
-      var setSearch = searchState[1];
+    /**
+     * Render the outline tab: bulk controls plus the bookmark tree.
+     *
+     * @param props - outline, expansion state and navigation handlers.
+     * @returns the outline content, or a hint when the document has no bookmarks.
+     */
+    function renderOutlineTab(props) {
+      var outline = props.outline;
+      if (outline === undefined || outline.total === 0) {
+        return renderHint('这份 PDF 没有内嵌书签。试试「缩略图」翻页，或用「搜索」定位正文。');
+      }
+      return h(React.Fragment, null,
+        h('div', { className: 'dpr-outline-tools' },
+          h('button', { type: 'button', className: 'dpr-tool', onClick: props.onExpandAll }, '展开全部'),
+          h('button', { type: 'button', className: 'dpr-tool', onClick: props.onCollapseAll }, '折叠全部'),
+        ),
+        h(OutlineRows, {
+          nodes: outline.tree,
+          expanded: props.expanded,
+          currentNodeId: props.currentNodeId,
+          onPick: function (node) { if (node.page > 0) props.onJump(node.page); },
+          onToggle: props.onToggle,
+        }),
+      );
+    }
 
-      var buttonRef = React.useRef(null);
-      var panelRef = React.useRef(null);
-      var jumpCancelRef = React.useRef(null);
-      var restoreRef = React.useRef(false);
-      var textCacheRef = React.useRef(new Map());
-      var searchTokenRef = React.useRef(0);
-      var uiRestoreRef = React.useRef({ id: '', skip: false });
+    /**
+     * Render the thumbnail tab as a page grid.
+     *
+     * @param props - parsed document, page count, current page and handlers.
+     * @returns the thumbnail grid.
+     */
+    function renderThumbsTab(props) {
+      var docState = props.docState;
+      var cells = [];
+      for (var pageNumber = 1; pageNumber <= props.numPages; pageNumber += 1) {
+        cells.push(h('div', {
+          key: 'thumb-' + pageNumber,
+          className: 'dpr-thumb' + (pageNumber === props.currentPage ? ' is-current' : ''),
+          onClick: function (target) { return function () { props.onJump(target); }; }(pageNumber),
+        }, h(Thumbnail, {
+          doc: docState.doc,
+          page: pageNumber,
+          width: 148,
+          root: props.root,
+          ratio: docState.ratio,
+          label: props.labelOf(pageNumber),
+        })));
+      }
+      return h('div', { className: 'dpr-grid' }, cells);
+    }
 
-      React.useEffect(function () {
-        var stored = contentId === '' ? undefined : readStore(STORE_UI)[contentId];
-        uiRestoreRef.current = { id: contentId, skip: true };
-        if (stored === null || typeof stored !== 'object') return;
-        setOpen(stored.open === true);
-        if (stored.tab === 'outline' || stored.tab === 'thumbs' || stored.tab === 'search') setTab(stored.tab);
-      }, [contentId]);
+    /**
+     * Render the search tab: query box, progress line and hits.
+     *
+     * @param props - search state, query and handlers.
+     * @returns the search content.
+     */
+    function renderSearchTab(props) {
+      var search = props.search;
+      return h(React.Fragment, null,
+        h('div', { className: 'dpr-search' },
+          h('input', {
+            className: 'dpr-search-input',
+            type: 'search',
+            placeholder: '搜索全文，回车执行',
+            value: props.query,
+            autoFocus: true,
+            onChange: function (event) { props.onQuery(event.target.value); },
+            onKeyDown: function (event) { if (event.key === 'Enter') props.onSearch(); },
+          }),
+          h('span', { className: 'dpr-hit-page' },
+            search.status === 'running'
+              ? '搜索中… ' + String(search.scanned) + '/' + String(search.total)
+              : search.status === 'done'
+                ? '找到 ' + String(search.results.length) + ' 处' + (search.results.length >= 200 ? '（仅显示前 200 处）' : '')
+                : ''),
+        ),
+        search.results.map(function (hit) {
+          return h('div', { key: hit.key, className: 'dpr-hit', onClick: function () { props.onJump(hit.page); } },
+            h('span', { className: 'dpr-hit-page' }, '第 ' + props.labelOf(hit.page) + ' 页'),
+            h('span', { className: 'dpr-hit-text' }, hit.head, h('mark', { className: 'dpr-hit-mark' }, hit.mark), hit.tail));
+        }),
+      );
+    }
 
-      React.useEffect(function () {
-        if (contentId === '') return;
-        if (uiRestoreRef.current.skip === true && uiRestoreRef.current.id === contentId) {
-          uiRestoreRef.current.skip = false;
-          return;
-        }
-        var all = readStore(STORE_UI);
-        all[contentId] = { open: open === true, tab: tab };
-        writeStore(STORE_UI, all);
-      }, [open, tab, contentId]);
+    /**
+     * Parse the document behind a navigation source and track its progress.
+     *
+     * The hook owns the load token, so a slow read of a retired document can
+     * never overwrite a newer one, and it destroys the old document when the key
+     * changes or the component unmounts.
+     *
+     * @param options.source - navigation source: eager flag plus the reader.
+     * @param options.documentKey - identity of the document; '' loads nothing.
+     * @param options.open - whether the panel is open; lazy sources wait for it.
+     * @param options.onReset - called when a new key retires the previous document.
+     * @returns the document state.
+     */
+    function useDocumentLoad(options) {
+      var source = options.source;
+      var documentKey = options.documentKey;
+      var open = options.open;
+      var onReset = options.onReset;
 
-      React.useEffect(function () {
-        textCacheRef.current = new Map();
-        restoreRef.current = false;
-        if (bytes === undefined) {
-          setDocState({ status: 'idle' });
-          return undefined;
-        }
-        var cancelled = false;
+      var stateValue = React.useState({ status: 'idle' });
+      var docState = stateValue[0];
+      var setDocState = stateValue[1];
+      var readRef = React.useRef(source.read);
+      var documentKeyRef = React.useRef(documentKey);
+      var loadTokenRef = React.useRef(0);
+      var activeKeyRef = React.useRef('');
+      var docRef = React.useRef(undefined);
+      var resetRef = React.useRef(onReset);
+
+      // The host re-renders with a fresh source object, so the refs carry the
+      // current reader and key into loads that outlive this render.
+      readRef.current = source.read;
+      documentKeyRef.current = documentKey;
+      resetRef.current = onReset;
+
+      var startLoad = React.useCallback(function () {
+        var key = documentKeyRef.current;
+        if (key === '' || activeKeyRef.current === key) return;
+        activeKeyRef.current = key;
+        loadTokenRef.current += 1;
+        var token = loadTokenRef.current;
+        var stale = function () { return token !== loadTokenRef.current; };
         var doc;
         setDocState({ status: 'loading' });
-        loadEngine().then(function (engine) {
-          if (cancelled === true) return undefined;
-          return openDocument(engine, bytes);
+        Promise.resolve().then(function () { return readRef.current(); }).then(function (payload) {
+          if (stale()) return undefined;
+          if (payload === undefined || payload === null) throw new Error('文档内容为空');
+          return loadEngine().then(function (engine) { return openDocument(engine, payload); });
         }).then(function (loading) {
           if (loading === undefined) return undefined;
           doc = loading;
-          if (cancelled === true) {
+          if (stale()) {
             doc.destroy();
             return undefined;
           }
-          return Promise.all([readOutline(doc), doc.getPageLabels().catch(function () { return null; })]).then(function (results) {
-            if (cancelled === true) return undefined;
+          docRef.current = doc;
+          return Promise.all([
+            readOutline(doc),
+            doc.getPageLabels().catch(function () { return null; }),
+            doc.getPage(1).then(function (first) {
+              var viewport = first.getViewport({ scale: 1 });
+              try { first.cleanup(); } catch (error) { /* already released */ }
+              return getPageRatio(viewport);
+            }, function () { return 0.75; }),
+          ]).then(function (results) {
+            if (stale()) return undefined;
             setDocState({
               status: 'ready',
               doc: doc,
               outline: results[0],
               labels: results[1],
+              ratio: results[2],
               numPages: doc.numPages,
             });
             return undefined;
           });
         }).catch(function (error) {
-          if (cancelled === true) return;
+          if (stale()) return;
           setDocState({ status: 'error', error: error });
+          activeKeyRef.current = '';
         });
+      }, []);
+
+      // A new document retires whatever the previous key loaded; the token makes
+      // any in-flight read of the old document land as a no-op.
+      React.useEffect(function () {
+        loadTokenRef.current += 1;
+        activeKeyRef.current = '';
+        if (resetRef.current !== undefined) resetRef.current();
+        setDocState({ status: 'idle' });
         return function () {
-          cancelled = true;
+          loadTokenRef.current += 1;
+          activeKeyRef.current = '';
+          var doc = docRef.current;
+          docRef.current = undefined;
           if (doc !== undefined) {
             try { doc.destroy(); } catch (error) { /* already destroyed */ }
           }
         };
-      }, [bytes]);
+      }, [documentKey]);
 
-      var jumpToPage = React.useCallback(function (page) {
-        var port = findScrollport(buttonRef.current);
-        if (port === null) return;
-        var target = findPageElement(port, page);
-        if (target === null) return;
-        var delta = target.getBoundingClientRect().top - port.getBoundingClientRect().top - PAGE_TOP_GAP;
-        setCurrentPage(page);
-        if (jumpCancelRef.current !== null) jumpCancelRef.current();
-        if (chooseScrollBehavior(delta, port.clientHeight) === 'smooth') {
-          port.scrollTo({ top: port.scrollTop + delta, behavior: 'smooth' });
-          jumpCancelRef.current = alignPageToTop(port, target, 1600);
-          return;
-        }
-        port.scrollTop += delta;
-        jumpCancelRef.current = alignPageToTop(port, target, 1200);
-      }, []);
+      // An eager source is already parsed by the host, so load it on sight; a lazy
+      // one waits for the reader to open the panel.
+      React.useEffect(function () {
+        if (source.eager !== true) return undefined;
+        startLoad();
+        return undefined;
+      }, [documentKey, source.eager, startLoad]);
 
       React.useEffect(function () {
-        return function () {
-          if (jumpCancelRef.current !== null) jumpCancelRef.current();
-        };
-      }, []);
+        if (source.eager === true || open !== true) return undefined;
+        startLoad();
+        return undefined;
+      }, [documentKey, source.eager, open, startLoad]);
+
+      return docState;
+    }
+
+    /**
+     * Track which page the reader is looking at and remember it per document.
+     *
+     * The visible page is the one with the largest overlap with the scrollport,
+     * measured on an animation frame so a fast scroll never runs a layout per
+     * event. Writes are debounced, so paging through a document does not hit
+     * storage on every frame.
+     *
+     * @param options.status - document state; tracking starts when 'ready'.
+     * @param options.buttonRef - the toggle button, used to find the scrollport.
+     * @param options.storageKey - key the remembered page is stored under.
+     * @returns the current page and its setter.
+     */
+    function usePageTracking(options) {
+      var status = options.status;
+      var buttonRef = options.buttonRef;
+      var storageKey = options.storageKey;
+
+      var state = React.useState(1);
+      var page = state[0];
+      var setPage = state[1];
 
       React.useEffect(function () {
-        if (docState.status !== 'ready') return;
-        if (restoreRef.current === true) return;
-        restoreRef.current = true;
-        var saved = readStoredPage(contentId);
-        if (saved < 2 || saved > docState.numPages) return;
-        var timer = window.setTimeout(function () { jumpToPage(saved); }, 350);
-        return function () { window.clearTimeout(timer); };
-      }, [docState.status, docState.numPages, contentId, jumpToPage]);
-
-      var storeOutline = React.useCallback(function (map) {
-        if (contentId === '') return;
-        var all = readStore(STORE_OUTLINE);
-        all[contentId] = { nodes: map };
-        writeStore(STORE_OUTLINE, all);
-      }, [contentId]);
-
-      React.useEffect(function () {
-        if (docState.status !== 'ready' || contentId === '') return;
-        var stored = readStore(STORE_OUTLINE)[contentId];
-        if (stored !== null && typeof stored === 'object' && stored.nodes !== null && typeof stored.nodes === 'object') {
-          setExpanded(stored.nodes);
-          return;
-        }
-        var preset = buildDefaultExpansion(docState.outline.flat, DEFAULT_EXPAND_DEPTH);
-        setExpanded(preset);
-        storeOutline(preset);
-      }, [docState.status, contentId, storeOutline]);
-
-      React.useEffect(function () {
-        if (docState.status !== 'ready') return undefined;
+        if (status !== 'ready') return undefined;
         var port = findScrollport(buttonRef.current);
         if (port === null) return undefined;
         var raf = 0;
@@ -780,7 +976,7 @@ window.__ModuleLoader__.load({
               best = Number(nodes[index].getAttribute('data-pdf-page'));
             }
           }
-          if (best >= 1) setCurrentPage(best);
+          if (best >= 1) setPage(best);
         };
         var schedule = function () { if (raf === 0) raf = window.requestAnimationFrame(measure); };
         port.addEventListener('scroll', schedule, { passive: true });
@@ -792,13 +988,66 @@ window.__ModuleLoader__.load({
           if (observer !== null) observer.disconnect();
           if (raf !== 0) window.cancelAnimationFrame(raf);
         };
-      }, [docState.status]);
+      }, [status, buttonRef]);
 
       React.useEffect(function () {
-        if (docState.status !== 'ready') return undefined;
-        var timer = window.setTimeout(function () { writeStoredPage(contentId, currentPage); }, 600);
+        if (status !== 'ready') return undefined;
+        var timer = window.setTimeout(function () { writeStoredPage(storageKey, page); }, 600);
         return function () { window.clearTimeout(timer); };
-      }, [currentPage, contentId, docState.status]);
+      }, [page, storageKey, status]);
+
+      return { page: page, setPage: setPage };
+    }
+
+    /**
+     * Jump to the page the reader left off on, once per document.
+     *
+     * The first page is the default, so only a remembered page past it is worth
+     * restoring; the delay lets the host finish laying out the pages before the
+     * jump measures them.
+     *
+     * @param options.status - document state; restores when 'ready'.
+     * @param options.numPages - page count of the ready document.
+     * @param options.documentKey - identity of the document being restored.
+     * @param options.storageKey - key the remembered page is stored under.
+     * @param options.jumpToPage - scrolls the document to a page.
+     */
+    function useRestoreLastPage(options) {
+      var status = options.status;
+      var numPages = options.numPages;
+      var documentKey = options.documentKey;
+      var storageKey = options.storageKey;
+      var jumpToPage = options.jumpToPage;
+      var restoredRef = React.useRef('');
+
+      React.useEffect(function () {
+        if (status !== 'ready') return undefined;
+        if (restoredRef.current === documentKey) return undefined;
+        restoredRef.current = documentKey;
+        var saved = readStoredPage(storageKey);
+        if (saved < 2 || saved > numPages) return undefined;
+        var timer = window.setTimeout(function () { jumpToPage(saved); }, 350);
+        return function () { window.clearTimeout(timer); };
+      }, [status, numPages, documentKey, storageKey, jumpToPage]);
+    }
+
+    /**
+     * Anchor the panel beside the document and push the scrollport aside.
+     *
+     * The host detaches the frame and the scrollport while a document loads, so
+     * the effect re-resolves both on structural changes, restores the margin it
+     * wrote on the previous node, and cancels the push when the panel closes.
+     *
+     * @param options.open - whether the panel is open.
+     * @param options.buttonRef - the toggle button, used to find host nodes.
+     * @param options.setAnchor - stores the measured frame rect.
+     * @param options.setOpen - opens or closes the panel (Escape closes it).
+     */
+    function usePanelAnchor(options) {
+      var open = options.open;
+      var buttonRef = options.buttonRef;
+      var setAnchor = options.setAnchor;
+      var setOpen = options.setOpen;
 
       React.useEffect(function () {
         if (open !== true) return undefined;
@@ -870,7 +1119,130 @@ window.__ModuleLoader__.load({
           document.removeEventListener('keydown', onKeyDown, true);
           if (port !== null && portMargin !== null && port.isConnected === true) port.style.marginLeft = portMargin;
         };
-      }, [open]);
+      }, [open, buttonRef, setAnchor, setOpen]);
+    }
+
+    function NavAction(props) {
+      var source = props.source;
+      var contentId = source.storageKey;
+      var documentKey = source.documentKey;
+
+      var openState = React.useState(false);
+      var open = openState[0];
+      var setOpen = openState[1];
+      var tabState = React.useState('outline');
+      var tab = tabState[0];
+      var setTab = tabState[1];
+      var anchorState = React.useState(null);
+      var anchor = anchorState[0];
+      var setAnchor = anchorState[1];
+      var expandedState = React.useState({});
+      var expanded = expandedState[0];
+      var setExpanded = expandedState[1];
+      var queryState = React.useState('');
+      var query = queryState[0];
+      var setQuery = queryState[1];
+      var searchState = React.useState({ status: 'idle', results: [], scanned: 0, total: 0 });
+      var search = searchState[0];
+      var setSearch = searchState[1];
+
+      var buttonRef = React.useRef(null);
+      var panelRef = React.useRef(null);
+      var jumpCancelRef = React.useRef(null);
+      var textCacheRef = React.useRef(new Map());
+      var searchTokenRef = React.useRef(0);
+      var uiRestoreRef = React.useRef({ id: '', skip: false });
+
+      // A retired document takes its cached text, remembered page and search
+      // results with it, so the load hook asks for that reset here.
+      var docState = useDocumentLoad({
+        source: source,
+        documentKey: documentKey,
+        open: open,
+        onReset: function () {
+          textCacheRef.current = new Map();
+          setSearch({ status: 'idle', results: [], scanned: 0, total: 0 });
+        },
+      });
+      var tracking = usePageTracking({
+        status: docState.status,
+        buttonRef: buttonRef,
+        storageKey: contentId,
+      });
+      var currentPage = tracking.page;
+      var setCurrentPage = tracking.setPage;
+
+      React.useEffect(function () {
+        var stored = contentId === '' ? undefined : readRecord(STORE_UI, contentId);
+        uiRestoreRef.current = { id: contentId, skip: true };
+        if (stored === null || typeof stored !== 'object') return;
+        setOpen(stored.open === true);
+        if (stored.tab === 'outline' || stored.tab === 'thumbs' || stored.tab === 'search') setTab(stored.tab);
+      }, [contentId]);
+
+      React.useEffect(function () {
+        if (contentId === '') return;
+        if (uiRestoreRef.current.skip === true && uiRestoreRef.current.id === contentId) {
+          uiRestoreRef.current.skip = false;
+          return;
+        }
+        writeRecord(STORE_UI, contentId, { open: open === true, tab: tab });
+      }, [open, tab, contentId]);
+
+      var jumpToPage = React.useCallback(function (page) {
+        var port = findScrollport(buttonRef.current);
+        if (port === null) return;
+        var target = findPageElement(port, page);
+        if (target === null) return;
+        var delta = target.getBoundingClientRect().top - port.getBoundingClientRect().top - PAGE_TOP_GAP;
+        setCurrentPage(page);
+        if (jumpCancelRef.current !== null) jumpCancelRef.current();
+        if (chooseScrollBehavior(delta, port.clientHeight) === 'smooth') {
+          port.scrollTo({ top: port.scrollTop + delta, behavior: 'smooth' });
+          jumpCancelRef.current = alignPageToTop(port, target, 1600);
+          return;
+        }
+        port.scrollTop += delta;
+        jumpCancelRef.current = alignPageToTop(port, target, 1200);
+      }, []);
+
+      React.useEffect(function () {
+        return function () {
+          if (jumpCancelRef.current !== null) jumpCancelRef.current();
+        };
+      }, []);
+
+      useRestoreLastPage({
+        status: docState.status,
+        numPages: docState.status === 'ready' ? docState.numPages : 0,
+        documentKey: documentKey,
+        storageKey: contentId,
+        jumpToPage: jumpToPage,
+      });
+
+      var storeOutline = React.useCallback(function (map) {
+        if (contentId === '') return;
+        writeRecord(STORE_OUTLINE, contentId, { nodes: map });
+      }, [contentId]);
+
+      React.useEffect(function () {
+        if (docState.status !== 'ready' || contentId === '') return;
+        var stored = readRecord(STORE_OUTLINE, contentId);
+        if (stored !== null && typeof stored === 'object' && stored.nodes !== null && typeof stored.nodes === 'object') {
+          setExpanded(stored.nodes);
+          return;
+        }
+        var preset = buildDefaultExpansion(docState.outline.flat, DEFAULT_EXPAND_DEPTH);
+        setExpanded(preset);
+        storeOutline(preset);
+      }, [docState.status, contentId, storeOutline]);
+
+      usePanelAnchor({
+        open: open,
+        buttonRef: buttonRef,
+        setAnchor: setAnchor,
+        setOpen: setOpen,
+      });
 
       var runSearch = React.useCallback(function () {
         var doc = docState.doc;
@@ -952,10 +1324,10 @@ window.__ModuleLoader__.load({
         ref: buttonRef,
         type: 'button',
         className: 'dpr-btn',
-        title: '目录 / 缩略图 / 搜索',
-        'aria-label': 'PDF 目录',
+        title: source.buttonTitle,
+        'aria-label': source.buttonLabel,
         'aria-expanded': open,
-        'data-dsh-pdf-reader-toggle': true,
+        'data-dsh-doc-nav-toggle': true,
         onClick: function () { setOpen(function (value) { return value !== true; }); },
       }, icon);
 
@@ -964,6 +1336,9 @@ window.__ModuleLoader__.load({
       var ready = docState.status === 'ready' ? docState : { status: docState.status, doc: undefined, outline: { tree: [], flat: [], total: 0 }, labels: null, numPages: 0, error: docState.error };
       var panel = h(TocPanel, {
         anchor: anchor,
+        panelLabel: source.panelLabel,
+        loadingLabel: source.loadingLabel,
+        idleLabel: source.idleLabel,
         tab: tab,
         onTab: setTab,
         onClose: function () { setOpen(false); },
@@ -985,13 +1360,102 @@ window.__ModuleLoader__.load({
       return h(React.Fragment, null, button, portal);
     }
 
+    /**
+     * Build the navigation source for a PDF body the host already parsed.
+     *
+     * @param props - keyed document-action props carrying the tab and its bytes.
+     * @returns the navigation action for that PDF.
+     */
+    function PdfNavAction(props) {
+      var info = typeof props.useTabInfo === 'function' ? props.useTabInfo() : undefined;
+      var contentId = info !== undefined && info !== null && info.tab !== undefined ? String(info.tab.contentId === undefined ? '' : info.tab.contentId) : '';
+      var bytes = props.content !== undefined && props.content !== null && props.content.kind === 'bytes' ? props.content.data : undefined;
+      var loaded = bytes !== undefined && contentId !== '';
+      var source = {
+        storageKey: contentId,
+        // Reading the same file again hands down a new array, which must reparse.
+        documentKey: loaded ? contentId + '#' + String(payloadIdOf(bytes)) : '',
+        eager: true,
+        buttonTitle: '目录 / 缩略图 / 搜索',
+        buttonLabel: 'PDF 目录',
+        panelLabel: 'PDF 目录与导航',
+        loadingLabel: '正在解析 PDF…',
+        idleLabel: '正在等待 PDF 内容…',
+        read: function () { return Promise.resolve(bytes); },
+      };
+      return h(NavAction, { source: source });
+    }
+
+    /**
+     * Unwrap the PDF bytes the host rendered for an Office document.
+     *
+     * @param result - the renderer Remote reply.
+     * @returns the converted PDF bytes.
+     * @throws Error naming the host error code when the conversion failed.
+     */
+    function readOfficePdfPayload(result) {
+      if (result === undefined || result === null || result.ok !== true) {
+        var error = result !== undefined && result !== null && result.error !== undefined && result.error !== null ? result.error : {};
+        throw new Error('Office 文档转换失败（' + String(error.code === undefined ? 'unknown' : error.code) + '）');
+      }
+      return result.value.data;
+    }
+
+    /**
+     * Build the navigation source for an Office document through the host renderer.
+     *
+     * The host converts doc, docx, ppt and pptx to PDF, so the panel parses that
+     * conversion and its page numbers match the preview exactly.
+     *
+     * @param props - list-slot props carrying the file path, session and renderer.
+     * @returns the navigation action, or null for other file types.
+     */
+    function OfficeNavAction(props) {
+      var path = typeof props.absolutePath === 'string' ? props.absolutePath : '';
+      if (!isOfficeDocumentPath(path)) return null;
+      var sessionId = props.sessionId;
+      var renderOfficePdf = props.renderOfficePdf;
+      var source = {
+        storageKey: 'office:' + path,
+        documentKey: 'office:' + path,
+        eager: false,
+        buttonTitle: '幻灯片导航（目录 / 缩略图 / 搜索）',
+        buttonLabel: '幻灯片导航',
+        panelLabel: '幻灯片目录与导航',
+        loadingLabel: '正在转换幻灯片…',
+        idleLabel: '正在等待文档内容…',
+        read: function () {
+          return Promise.resolve(renderOfficePdf(sessionId, path)).then(readOfficePdfPayload);
+        },
+      };
+      return h(NavAction, { source: source });
+    }
+
     function apply(ctx) {
       ctx.effect(installStyles, PACKAGE_ID + ': styles');
       ctx.slots.inject('sidebar.right.tab.document.action', function () {
         return ctx.slots.register({
           name: 'sidebar.right.tab.document.action',
           key: PDF_BODY_ID,
-        }, TocAction);
+        }, PdfNavAction);
+      });
+      // The list slot also hosts Office tabs, whose bytes only exist after the
+      // host converts them; the renderer Remote is what we ask for that.
+      ctx.inject(['remote', 'remote.officeKit'], function (scope) {
+        ctx.slots.inject('sidebar.right.tab.document.actions', function () {
+          return ctx.slots.register({
+            name: 'sidebar.right.tab.document.actions',
+            id: 'dsh-sidebar-doc-nav-office',
+            order: 10,
+            inject: function () {
+              return {
+                renderOfficePdf: function (sessionId, path, signal) {
+                  return scope.remote.officeKit.render(sessionId, path, 'foreground', signal);
+                },
+              };
+            },
+          }, OfficeNavAction);
+        });
       });
     }
 
@@ -1002,6 +1466,14 @@ window.__ModuleLoader__.load({
     exports.OutlineRows = OutlineRows;
     exports.chooseScrollBehavior = chooseScrollBehavior;
     exports.computePanelWidth = computePanelWidth;
+    exports.isOfficeDocumentPath = isOfficeDocumentPath;
+    exports.payloadIdOf = payloadIdOf;
+    exports.getPageRatio = getPageRatio;
+    exports.readStoredPage = readStoredPage;
+    exports.writeStoredPage = writeStoredPage;
+    exports.readOfficePdfPayload = readOfficePdfPayload;
+    exports.renderThumbsTab = renderThumbsTab;
+    exports.renderSearchTab = renderSearchTab;
 
     return module.exports;
   },

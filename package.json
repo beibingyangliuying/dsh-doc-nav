@@ -1,7 +1,7 @@
 {
-  "name": "@beibingyangliuying/dsh-sidebar-pdf-nav",
+  "name": "@beibingyangliuying/dsh-sidebar-doc-nav",
   "version": "0.1.0",
-  "description": "PDF outline (bookmark) navigation, thumbnails and full-text search for the DSH sidebar document preview.",
+  "description": "Outline (bookmark), thumbnail and full-text navigation for the DSH sidebar document preview: PDF files and the Office documents converted to PDF.",
   "type": "module",
   "main": "./lib/index.js",
   "exports": {
@@ -34,7 +34,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/beibingyangliuying/dsh-pdf-reader.git"
+    "url": "git+https://github.com/beibingyangliuying/dsh-doc-nav.git"
   },
   "publishConfig": {
     "access": "public"

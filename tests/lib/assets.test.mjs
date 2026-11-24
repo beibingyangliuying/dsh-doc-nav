@@ -12,7 +12,7 @@ async function request(routePath) {
   const routes = new Map();
   const webServer = { register: (definition) => { routes.set(definition.path, definition); return () => routes.delete(definition.path); } };
   registerAssetRoutes(webServer, packageRoot);
-  const route = routes.get('/dsh-sidebar-pdf-nav-assets');
+  const route = routes.get('/dsh-sidebar-doc-nav-assets');
   assert.ok(route, 'prefix route registered');
   const server = createServer((req, res) => { void route.handler(req, res); });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -27,7 +27,7 @@ async function request(routePath) {
 }
 
 test('serves the vendored engine with an immutable cache header', async () => {
-  const result = await request('/dsh-sidebar-pdf-nav-assets/pdfjs/pdf.bundle.js?v=1');
+  const result = await request('/dsh-sidebar-doc-nav-assets/pdfjs/pdf.bundle.js?v=1');
   assert.equal(result.status, 200);
   assert.match(result.headers.get('content-type') ?? '', /text\/javascript/);
   assert.match(result.headers.get('cache-control') ?? '', /immutable/);
@@ -35,18 +35,18 @@ test('serves the vendored engine with an immutable cache header', async () => {
 });
 
 test('serves binary worker assets', async () => {
-  const result = await request('/dsh-sidebar-pdf-nav-assets/pdfjs/pdf.worker.mjs');
+  const result = await request('/dsh-sidebar-doc-nav-assets/pdfjs/pdf.worker.mjs');
   assert.equal(result.status, 200);
   assert.ok(result.body.length > 1000);
 });
 
 test('rejects path traversal outside the asset root', async () => {
-  const result = await request('/dsh-sidebar-pdf-nav-assets/pdfjs/..%2Fpackage.json');
+  const result = await request('/dsh-sidebar-doc-nav-assets/pdfjs/..%2Fpackage.json');
   assert.ok(result.status === 404 || result.status === 403, `unexpected status ${result.status}`);
 });
 
 test('reports a missing asset as 404', async () => {
-  const result = await request('/dsh-sidebar-pdf-nav-assets/pdfjs/nope.mjs');
+  const result = await request('/dsh-sidebar-doc-nav-assets/pdfjs/nope.mjs');
   assert.equal(result.status, 404);
 });
 
@@ -62,7 +62,7 @@ test('rejects non-GET methods', async () => {
     setHeader(name, value) { if (name === 'allow') allow = String(value); },
     end() { status = this.statusCode; },
   };
-  await routes.get('/dsh-sidebar-pdf-nav-assets').handler({ method: 'POST', url: '/dsh-sidebar-pdf-nav-assets/pdfjs/pdf.worker.mjs' }, res);
+  await routes.get('/dsh-sidebar-doc-nav-assets').handler({ method: 'POST', url: '/dsh-sidebar-doc-nav-assets/pdfjs/pdf.worker.mjs' }, res);
   assert.equal(status, 405);
   assert.match(allow, /GET/);
 });
